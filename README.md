@@ -3,14 +3,14 @@
 ![Tag](https://img.shields.io/github/tag/jfut/sslcert-compose.svg)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-sslcert-compose is a command line tool that create SSL certificate files including a private key, CSR, and CRT.
+sslcert-compose is a command line tool that create SSL certificate files such as a private key, CSR, and CRT.
 
 ## Usage
 
 ```bash
 sslcert-compose 1.0.0
 
-Create SSL certificate files including a private key, CSR, and CRT.
+Create SSL certificate files such as a private key, CSR, and CRT.
 
 Usage:
     sslcert-compose [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-S] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n FQDN

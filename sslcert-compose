@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Create SSL certificate files including a private key, CSR, and CRT.
+# Create SSL certificate files such as a private key, CSR, and CRT.
 #
 # Copyright (c) 2023 Jun Futagawa (jfut)
 #
@@ -20,7 +20,7 @@ usage() {
     cat << _EOF_
 $(basename ${0}) ${VERSION}
 
-Create SSL certificate files including a private key, CSR, and CRT.
+Create SSL certificate files such as a private key, CSR, and CRT.
 
 Usage:
     $(basename ${0}) [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-S] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n FQDN
