@@ -1,0 +1,267 @@
+#!/bin/bash
+#
+# Create SSL certificate files including a private key, CSR, and CRT.
+#
+# Copyright (c) 2023 Jun Futagawa (jfut)
+#
+# This software is released under the MIT License.
+# http://opensource.org/licenses/mit-license.php
+
+set -euo pipefail
+
+VERSION="1.0.0"
+
+BASE_DIR="$(dirname $(dirname $(realpath "${0}")))"
+
+unset RANDFILE
+
+# Usage
+usage() {
+    cat << _EOF_
+$(basename ${0}) ${VERSION}
+
+Create SSL certificate files including a private key, CSR, and CRT.
+
+Usage:
+    $(basename ${0}) [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-S] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n FQDN
+    $(basename ${0}) -c FQDN_CSR_FILE
+    $(basename ${0}) -c FQDN_CRT_FILE
+
+    Default options:
+        -o Output directory (default: FQDN/YYYY-MM-DD/)
+        -l Key bit length (default: 2048)
+        -d Expiration date of self-signed certificate file (default: 365)
+
+    Examples:
+        Create private key and CSR files:
+            $(basename ${0}) -n example.org
+
+        Create private key with pass phrase and CSR files:
+            KEY_PASS_PHRASE=\$(read -s -p "KEY_PASS_PHRASE: " KEY_PASS_PHRASE; echo \${KEY_PASS_PHRASE})
+            $(basename ${0}) -p "\${KEY_PASS_PHRASE}" -n example.org
+
+        Create private key and CSR files with a specified request subject:
+            $(basename ${0}) -n example.org -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
+
+        Create private key and CSR files in a specific output directory:
+            $(basename ${0}) -o /path/to/output/ -n example.org
+
+        Create private key and CSR files in a specific output directory with overwrite:
+            $(basename ${0}) -o /path/to/output/ -n example.org -f
+
+        Create private key, CSR and self-signed CRT files with an expiration date of 3650 days:
+            $(basename ${0}) -n example.org 
+              -S -A "*.example.org,example.com" \\
+              -D 3650 \\
+              -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
+
+        Check CSR file:
+            $(basename ${0}) -c example.org.csr
+
+        Check CRT file:
+            $(basename ${0}) -c example.org.crt
+
+    Server configuration examples:
+        Apache:
+            SSLCertificateFile /path/to/example.org.crt
+            SSLCertificateKeyFile /path/to/example.org.key
+            SSLCertificateChainFile /path/to/example.org.ca.crt
+
+        nginx:
+            ssl_certificate /path/to/example.org.crt;
+            ssl_certificate_key /path/to/example.org.key;
+_EOF_
+}
+
+atexit() {
+    if [[ ! -z "${RANDFILE}" ]]; then
+        rm -f "${RANDFILE}"
+    fi
+}
+
+csr_check() {
+    local CHECK_FILE="${1}"
+    openssl req -noout -text -in "${CHECK_FILE}"
+}
+
+crt_check() {
+    local CHECK_FILE="${1}"
+    openssl x509 -noout -text -in "${CHECK_FILE}"
+}
+
+ssl_create() {
+    local -n OPTIONS="${1}"
+
+    # DEBUG
+    # echo "OPTIONS: ${!OPTIONS[@]}"
+    # echo "OPTIONS: ${OPTIONS[@]}"
+
+    # Create output directory
+    mkdir -p "${OPTIONS["OUTPUT_DIR"]}"
+
+    RANDFILE=$(mktemp -p "${OPTIONS["OUTPUT_DIR"]}")
+    trap atexit EXIT
+    trap 'rc=$?; trap - EXIT; atexit; exit $?' INT PIPE TERM
+    echo "# Generate rand file: ${RANDFILE}"
+    head -c 4096 /dev/urandom | base64 | tr -d '=' > "${RANDFILE}"
+
+    local FQDN_FQDN_PRIVATE_KEY_WITH_PASS="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}-pass.key"
+    local FQDN_PRIVATE_KEY="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.key"
+
+    if [[ "${OPTIONS["FORCE"]}" -eq 0 ]] && [[ -f "${FQDN_PRIVATE_KEY}" ]]; then
+        echo "Error: private key ${FQDN_PRIVATE_KEY} already exists. Use the -f option if you want to overwrite."
+        exit 1
+    fi
+
+    local FQDN_PRIVATE_KEY_PASS
+    if [[ -z "${OPTIONS["KEY_PASS_PHRASE"]}" ]]; then
+        read -s -p "Enter pass phrase for new private key: " FQDN_PRIVATE_KEY_PASS
+        echo
+    else
+        FQDN_PRIVATE_KEY_PASS="${OPTIONS["KEY_PASS_PHRASE"]}"
+    fi
+
+    echo "# Generate new private key: ${FQDN_FQDN_PRIVATE_KEY_WITH_PASS}"
+    openssl genrsa -des3 -passout "pass:${FQDN_PRIVATE_KEY_PASS}" -rand "${RANDFILE}" "${OPTIONS["KEY_BIT_LENGTH"]}" > "${FQDN_FQDN_PRIVATE_KEY_WITH_PASS}"
+    chmod 600 "${FQDN_FQDN_PRIVATE_KEY_WITH_PASS}"
+    rm -f "${RANDFILE}"
+
+    echo "# Unlock private key file: ${FQDN_PRIVATE_KEY}"
+    openssl rsa -passin "pass:${FQDN_PRIVATE_KEY_PASS}" -in "${FQDN_FQDN_PRIVATE_KEY_WITH_PASS}" -out "${FQDN_PRIVATE_KEY}"
+    chmod 600 "${FQDN_PRIVATE_KEY}"
+
+    local FQDN_CSR_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.csr"
+
+    echo "# Generate CSR file: ${FQDN_CSR_FILE}"
+    if [[ -z "${OPTIONS["SUBJECT"]}" ]]; then
+        openssl req -new -sha256 -key "${FQDN_PRIVATE_KEY}" -out "${FQDN_CSR_FILE}"
+    else
+        openssl req -new -sha256 -key "${FQDN_PRIVATE_KEY}" -out "${FQDN_CSR_FILE}" -subj "${OPTIONS["SUBJECT"]}"
+    fi
+
+    if [[ "${OPTIONS["MODE"]}" == "self_signed" ]]; then
+        # CA certificate
+        local CA_FQDN_CRT_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.ca.crt"
+        echo "# Generate CA private key and CRT files: ${CA_FQDN_CRT_FILE}"
+        # Use the same private key and options
+        openssl req -new -x509 -sha256 -days "${OPTIONS["EXPIRE_DAYS"]}" -key "${FQDN_PRIVATE_KEY}" -out "${CA_FQDN_CRT_FILE}" -subj "${OPTIONS["SUBJECT"]}"
+
+        # Server certificate
+        # SAN: Subject Alternative Name
+        local SUBJECT_ALT_NAME="DNS:${OPTIONS["FQDN"]}"
+        if [[ ! -z "${OPTIONS["SUBJECT_ALT_NAMES"]}" ]]; then
+            local ALT_NAMES=${OPTIONS["SUBJECT_ALT_NAMES"]//,/ }
+            local ALT_NAME=""
+            # *.example.org,example.com -> *.example.org example.com"
+            set -f
+            for ALT_NAME in ${ALT_NAMES}
+            do
+                SUBJECT_ALT_NAME="${SUBJECT_ALT_NAME}, DNS:${ALT_NAME}"
+            done
+            set +f
+        fi
+        local SUBJECT_ALT_NAME_FILE="${OPTIONS["OUTPUT_DIR"]}/subjectAltName.txt"
+        echo "subjectAltName = ${SUBJECT_ALT_NAME}" > "${SUBJECT_ALT_NAME_FILE}"
+
+        local FQDN_CRT_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.crt"
+        echo "# Generate self-signed CRT file: ${FQDN_CRT_FILE} (expiration days: ${OPTIONS["EXPIRE_DAYS"]})"
+        openssl x509 -days "${OPTIONS["EXPIRE_DAYS"]}" -req -extfile "${SUBJECT_ALT_NAME_FILE}" -CA "${CA_FQDN_CRT_FILE}" -CAkey "${FQDN_PRIVATE_KEY}" -in "${FQDN_CSR_FILE}" -out "${FQDN_CRT_FILE}" -set_serial 1
+
+        echo "# Check CSR file: ${FQDN_CSR_FILE}"
+        csr_check "${FQDN_CSR_FILE}"
+
+        echo "# Check CRT file: ${FQDN_CRT_FILE}"
+        crt_check "${FQDN_CRT_FILE}"
+    else
+        echo "# Check CSR file: ${FQDN_CSR_FILE}"
+        csr_check "${FQDN_CSR_FILE}"
+    fi
+
+    echo
+    echo "# Result: ${OPTIONS["OUTPUT_DIR"]}/"
+    ls -al "${OPTIONS["OUTPUT_DIR"]}"
+}
+
+# Main
+main() {
+    [[ $# -lt 1 ]] && usage && exit 1
+
+    declare -A CMD_OPTIONS=(
+        ["MODE"]="create"
+        ["KEY_PASS_PHRASE"]=""
+        ["KEY_BIT_LENGTH"]=2048
+        ["EXPIRE_DAYS"]=365
+        ["FORCE"]=0
+        ["OUTPUT_DIR"]=""
+        ["SUBJECT"]=""
+        ["SUBJECT_ALT_NAMES"]=""
+    )
+
+    while getopts cC:Sfn:o:p:s:l:D:A:h OPT; do
+        case "${OPT}" in
+            "c" )
+                CMD_OPTIONS["MODE"]="csr_check"
+                CMD_OPTIONS["CHECK_FILE"]="${OPTARG}"
+                ;;
+            "c" )
+                CMD_OPTIONS["MODE"]="crt_check"
+                CMD_OPTIONS["CHECK_FILE"]="${OPTARG}"
+                ;;
+            "S" )
+                CMD_OPTIONS["MODE"]="self_signed" ;;
+            "f" )
+                CMD_OPTIONS["FORCE"]=1 ;;
+            "n" )
+                CMD_OPTIONS["FQDN"]="${OPTARG}" ;;
+            "o" )
+                CMD_OPTIONS["OUTPUT_DIR"]="${OPTARG}" ;;
+            "p" )
+                CMD_OPTIONS["KEY_PASS_PHRASE"]="${OPTARG}" ;;
+            "s" )
+                CMD_OPTIONS["SUBJECT"]="${OPTARG}" ;;
+            "l" )
+                CMD_OPTIONS["KEY_BIT_LENGTH"]="${OPTARG}" ;;
+            "D" )
+                CMD_OPTIONS["EXPIRE_DAYS"]="${OPTARG}" ;;
+            "A" )
+                CMD_OPTIONS["SUBJECT_ALT_NAMES"]="${OPTARG}" ;;
+            "h" )
+                usage
+                exit 0
+                ;;
+            * )
+                usage
+                exit 1
+                ;;
+        esac
+    done
+    shift $((OPTIND - 1))
+
+    # Check CSR file mode
+    if [[ "${CMD_OPTIONS["MODE"]}" == "csr_check" ]]; then
+        csr_check "${CMD_OPTIONS["CHECK_FILE"]}"
+        exit 0
+    fi
+
+    # Check CRT file mode
+    if [[ "${CMD_OPTIONS["MODE"]}" == "crt_check" ]]; then
+        crt_check "${CMD_OPTIONS["CHECK_FILE"]}"
+        exit 0
+    fi
+
+    # Create mode
+    if [[ -z "${CMD_OPTIONS["FQDN"]}" ]]; then
+        echo "Error: FQDN is not set"
+        exit 1
+    fi
+
+    # Output directory
+    if [[ -z "${CMD_OPTIONS["OUTPUT_DIR"]}" ]]; then
+        CMD_OPTIONS["OUTPUT_DIR"]="${CMD_OPTIONS["FQDN"]}/$(date -I)"
+    fi
+
+    ssl_create CMD_OPTIONS
+}
+
+[[ ${#BASH_SOURCE[@]} = 1 ]] && main "${@:+$@}"
+
