@@ -63,15 +63,6 @@ Server configuration examples:
         ssl_certificate_key /path/to/example.org.key;
 ```
 
-## Release tag
-
-e.g.:
-
-```bash
-git tag -a v1.0.0 -m "v1.0.0"
-git push origin refs/tags/v1.0.0
-```
-
 ## License
 
 MIT
