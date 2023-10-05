@@ -17,49 +17,50 @@ Usage:
     sslcert-compose -c FQDN_CSR_FILE
     sslcert-compose -c FQDN_CRT_FILE
 
-    Default options:
-        -o Output directory (default: FQDN/YYYY-MM-DD/)
-        -l Key bit length (default: 2048)
-        -d Expiration date of self-signed certificate file (default: 365)
+Default options:
+    -o Output directory (default: FQDN/YYYY-MM-DD/)
+    -l Key bit length (default: 2048)
+    -d Expiration date of self-signed certificate file (default: 365)
 
-    Examples:
-        Create private key and CSR files:
-            sslcert-compose -n example.org
+Examples:
+    Create private key and CSR files:
+        sslcert-compose -n example.org
 
-        Create private key with pass phrase and CSR files:
-            KEY_PASS_PHRASE=$(read -s -p "KEY_PASS_PHRASE: " KEY_PASS_PHRASE; echo ${KEY_PASS_PHRASE})
-            sslcert-compose -p "${KEY_PASS_PHRASE}" -n example.org
+    Create private key with pass phrase and CSR files:
+        KEY_PASS_PHRASE=$(read -s -p "KEY_PASS_PHRASE: " KEY_PASS_PHRASE; echo ${KEY_PASS_PHRASE})
+        sslcert-compose -p "${KEY_PASS_PHRASE}" -n example.org
 
-        Create private key and CSR files with a specified request subject:
-            sslcert-compose -n example.org -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
+    Create private key and CSR files with a specified request subject:
+        sslcert-compose -n example.org \
+          -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
 
-        Create private key and CSR files in a specific output directory:
-            sslcert-compose -o /path/to/output/ -n example.org
+    Create private key and CSR files in a specific output directory:
+        sslcert-compose -o /path/to/output/ -n example.org
 
-        Create private key and CSR files in a specific output directory with overwrite:
-            sslcert-compose -o /path/to/output/ -n example.org -f
+    Create private key and CSR files in a specific output directory with overwrite:
+        sslcert-compose -o /path/to/output/ -n example.org -f
 
-        Create private key, CSR and self-signed CRT files with an expiration date of 3650 days:
-            sslcert-compose -n example.org
-              -S -A "*.example.org,example.com" \
-              -D 3650 \
-              -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
+    Create private key, CSR and self-signed CRT files with an expiration date of 3650 days:
+        sslcert-compose -n example.org
+          -S -A "*.example.org,example.com" \
+          -D 3650 \
+          -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
 
-        Check CSR file:
-            sslcert-compose -c example.org.csr
+    Check CSR file:
+        sslcert-compose -c example.org.csr
 
-        Check CRT file:
-            sslcert-compose -c example.org.crt
+    Check CRT file:
+        sslcert-compose -c example.org.crt
 
-    Server configuration examples:
-        Apache:
-            SSLCertificateFile /path/to/example.org.crt
-            SSLCertificateKeyFile /path/to/example.org.key
-            SSLCertificateChainFile /path/to/example.org.ca.crt
+Server configuration examples:
+    Apache:
+        SSLCertificateFile /path/to/example.org.crt
+        SSLCertificateKeyFile /path/to/example.org.key
+        SSLCertificateChainFile /path/to/example.org.ca.crt
 
-        nginx:
-            ssl_certificate /path/to/example.org.crt;
-            ssl_certificate_key /path/to/example.org.key;
+    nginx:
+        ssl_certificate /path/to/example.org.crt;
+        ssl_certificate_key /path/to/example.org.key;
 ```
 
 ## Release tag
