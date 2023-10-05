@@ -42,9 +42,9 @@ Examples:
 
     Create private key, CSR and self-signed CRT files with an expiration date of 3650 days:
         sslcert-compose -n example.org
+          -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org" \
           -S -A "*.example.org,example.com" \
-          -D 3650 \
-          -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
+          -D 3650
 
     Check CSR file:
         sslcert-compose -c example.org.csr

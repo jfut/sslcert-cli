@@ -42,7 +42,7 @@ Examples:
 
     Create private key and CSR files with a specified request subject:
         $(basename ${0}) -n example.org \\
-            -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
+          -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
 
     Create private key and CSR files in a specific output directory:
         $(basename ${0}) -o /path/to/output/ -n example.org
@@ -52,9 +52,9 @@ Examples:
 
     Create private key, CSR and self-signed CRT files with an expiration date of 3650 days:
         $(basename ${0}) -n example.org 
-            -S -A "*.example.org,example.com" \\
-            -D 3650 \\
-            -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
+          -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org" \\
+          -S -A "*.example.org,example.com" \\
+          -D 3650
 
     Check CSR file:
         $(basename ${0}) -c example.org.csr
