@@ -1,21 +1,21 @@
-# sslcert-compose
+# sslcert-cli
 
-![Tag](https://img.shields.io/github/tag/jfut/sslcert-compose.svg)
+![Tag](https://img.shields.io/github/tag/jfut/sslcert-cli.svg)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-sslcert-compose is a command line tool that create SSL certificate files such as a private key, CSR, and CRT.
+sslcert-cli is a command line tool that create SSL certificate files such as a private key, CSR, and CRT.
 
 ## Usage
 
 ```bash
-sslcert-compose 1.0.0
+sslcert-cli 1.1.0
 
 Create SSL certificate files such as a private key, CSR, and CRT.
 
 Usage:
-    sslcert-compose [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-S] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n FQDN
-    sslcert-compose -c FQDN_CSR_FILE
-    sslcert-compose -c FQDN_CRT_FILE
+    sslcert-cli [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-S] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n FQDN
+    sslcert-cli -c FQDN_CSR_FILE
+    sslcert-cli -c FQDN_CRT_FILE
 
 Default options:
     -o Output directory (default: FQDN/YYYY-MM-DD/)
@@ -24,33 +24,33 @@ Default options:
 
 Examples:
     Create private key and CSR files:
-        sslcert-compose -n example.org
+        sslcert-cli -n example.org
 
     Create private key with pass phrase and CSR files:
         KEY_PASS_PHRASE=$(read -s -p "KEY_PASS_PHRASE: " KEY_PASS_PHRASE; echo ${KEY_PASS_PHRASE})
-        sslcert-compose -p "${KEY_PASS_PHRASE}" -n example.org
+        sslcert-cli -p "${KEY_PASS_PHRASE}" -n example.org
 
     Create private key and CSR files with a specified request subject:
-        sslcert-compose -n example.org \
+        sslcert-cli -n example.org \
           -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org"
 
     Create private key and CSR files in a specific output directory:
-        sslcert-compose -o /path/to/output/ -n example.org
+        sslcert-cli -o /path/to/output/ -n example.org
 
     Create private key and CSR files in a specific output directory with overwrite:
-        sslcert-compose -o /path/to/output/ -n example.org -f
+        sslcert-cli -o /path/to/output/ -n example.org -f
 
     Create private key, CSR and self-signed CRT files with an expiration date of 3650 days:
-        sslcert-compose -n example.org
+        sslcert-cli -n example.org
           -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org" \
           -S -A "*.example.org,example.com" \
           -D 3650
 
     Check CSR file:
-        sslcert-compose -c example.org.csr
+        sslcert-cli -c example.org.csr
 
     Check CRT file:
-        sslcert-compose -c example.org.crt
+        sslcert-cli -c example.org.crt
 
 Server configuration examples:
     Apache:
