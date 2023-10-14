@@ -145,7 +145,11 @@ ssl_create() {
         local CA_FQDN_CRT_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.ca.crt"
         echo "# Generate CA private key and CRT files: ${CA_FQDN_CRT_FILE}"
         # Use the same private key and options
-        openssl req -new -x509 -sha256 -days "${OPTIONS["EXPIRE_DAYS"]}" -key "${FQDN_PRIVATE_KEY}" -out "${CA_FQDN_CRT_FILE}" -subj "${OPTIONS["SUBJECT"]}"
+        if [[ -z "${OPTIONS["SUBJECT"]}" ]]; then
+            openssl req -new -x509 -sha256 -days "${OPTIONS["EXPIRE_DAYS"]}" -key "${FQDN_PRIVATE_KEY}" -out "${CA_FQDN_CRT_FILE}"
+        else
+            openssl req -new -x509 -sha256 -days "${OPTIONS["EXPIRE_DAYS"]}" -key "${FQDN_PRIVATE_KEY}" -out "${CA_FQDN_CRT_FILE}" -subj "${OPTIONS["SUBJECT"]}"
+        fi
 
         # Server certificate
         # SAN: Subject Alternative Name
