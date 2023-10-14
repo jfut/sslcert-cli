@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.1.1"
 
 BASE_DIR="$(dirname $(dirname $(realpath "${0}")))"
 
@@ -25,7 +25,7 @@ Create SSL certificate files such as a private key, CSR, and CRT.
 Usage:
     $(basename ${0}) [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-S] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n FQDN
     $(basename ${0}) -c FQDN_CSR_FILE
-    $(basename ${0}) -c FQDN_CRT_FILE
+    $(basename ${0}) -C FQDN_CRT_FILE
 
 Default options:
     -o Output directory (default: FQDN/YYYY-MM-DD/)
@@ -60,7 +60,7 @@ Examples:
         $(basename ${0}) -c example.org.csr
 
     Check CRT file:
-        $(basename ${0}) -c example.org.crt
+        $(basename ${0}) -C example.org.crt
 
 Server configuration examples:
     Apache:
@@ -198,13 +198,13 @@ main() {
         ["SUBJECT_ALT_NAMES"]=""
     )
 
-    while getopts cC:Sfn:o:p:s:l:D:A:h OPT; do
+    while getopts c:C:Sfn:o:p:s:l:D:A:h OPT; do
         case "${OPT}" in
             "c" )
                 CMD_OPTIONS["MODE"]="csr_check"
                 CMD_OPTIONS["CHECK_FILE"]="${OPTARG}"
                 ;;
-            "c" )
+            "C" )
                 CMD_OPTIONS["MODE"]="crt_check"
                 CMD_OPTIONS["CHECK_FILE"]="${OPTARG}"
                 ;;
