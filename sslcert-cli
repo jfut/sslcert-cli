@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Create SSL certificate files such as a private key, CSR, and CRT.
+# Create SSL certificate files such as a private key, CSR, and CRT, and also support generating mTLS private CA and client certificates.
 #
 # Copyright (c) 2023 Jun Futagawa (jfut)
 #
@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.1"
+VERSION="1.2.0"
 
 BASE_DIR="$(dirname $(dirname $(realpath "${0}")))"
 
@@ -20,17 +20,21 @@ usage() {
     cat << _EOF_
 $(basename ${0}) ${VERSION}
 
-Create SSL certificate files such as a private key, CSR, and CRT.
+Create SSL certificate files such as a private key, CSR, and CRT, and also support generating mTLS private CA and client certificates.
 
 Usage:
     $(basename ${0}) [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-S] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n FQDN
+
+    $(basename ${0}) -m mtls [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-D EXPIRE_DAYS] -n CA_NAME
+    $(basename ${0}) -m mtls -i [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-R CA_DIR] [-k CA_KEY_FILE] [-r CA_CRT_FILE] [-P MTLS_CA_KEY_PASS_PHRASE] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n CLIENT_NAME
+
     $(basename ${0}) -c FQDN_CSR_FILE
     $(basename ${0}) -C FQDN_CRT_FILE
 
 Default options:
     -o Output directory (default: FQDN/YYYY-MM-DD/)
     -l Key bit length (default: 2048)
-    -d Expiration date of self-signed certificate file (default: 365)
+    -D Expiration days of certificate file (default: 365)
 
 Examples:
     Create private key and CSR files:
@@ -47,14 +51,43 @@ Examples:
     Create private key and CSR files in a specific output directory:
         $(basename ${0}) -o /path/to/output/ -n example.org
 
-    Create private key and CSR files in a specific output directory with overwrite:
+    Create private key and CSR files in a specific output directory with overwrite enabled:
         $(basename ${0}) -o /path/to/output/ -n example.org -f
 
     Create private key, CSR and self-signed CRT files with an expiration date of 3650 days:
-        $(basename ${0}) -n example.org 
+        $(basename ${0}) -n example.org \\
           -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=example.org/emailAddress=ssladmin@example.org" \\
           -S -A "*.example.org,example.com" \\
           -D 3650
+
+    # mTLS
+
+    Create mTLS private CA only:
+        MTLS_CA_KEY_PASS_PHRASE=\$(read -s -p "MTLS_CA_KEY_PASS_PHRASE: " MTLS_CA_KEY_PASS_PHRASE; echo \${MTLS_CA_KEY_PASS_PHRASE})
+        $(basename ${0}) -m mtls -P "\${MTLS_CA_KEY_PASS_PHRASE}" -n mtls.example.com \\
+          -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=mtls.example.com" -D 36500
+
+    Create mTLS client certificate by auto-detecting CA files from directory:
+        MTLS_CA_KEY_PASS_PHRASE=\$(read -s -p "MTLS_CA_KEY_PASS_PHRASE: " MTLS_CA_KEY_PASS_PHRASE; echo \${MTLS_CA_KEY_PASS_PHRASE})
+        MTLS_CLIENT_KEY_PASS_PHRASE=\$(read -s -p "MTLS_CLIENT_KEY_PASS_PHRASE: " MTLS_CLIENT_KEY_PASS_PHRASE; echo \${MTLS_CLIENT_KEY_PASS_PHRASE})
+        $(basename ${0}) -m mtls -i -n client1.mtls.example.com \\
+          -R mtls.example.com/YYYY-MM-DD/ \\
+          -P "\${MTLS_CA_KEY_PASS_PHRASE}" \\
+          -p "\${MTLS_CLIENT_KEY_PASS_PHRASE}" \\
+          -D 36500
+        # If both client and CA pairs exist, *-mtls-ca.key/crt is preferred automatically.
+        # If -o is specified together with -R, the -o path is used as the output directory.
+
+    Create mTLS client certificate with existing private CA:
+        MTLS_CA_KEY_PASS_PHRASE=\$(read -s -p "MTLS_CA_KEY_PASS_PHRASE: " MTLS_CA_KEY_PASS_PHRASE; echo \${MTLS_CA_KEY_PASS_PHRASE})
+        MTLS_CLIENT_KEY_PASS_PHRASE=\$(read -s -p "MTLS_CLIENT_KEY_PASS_PHRASE: " MTLS_CLIENT_KEY_PASS_PHRASE; echo \${MTLS_CLIENT_KEY_PASS_PHRASE})
+        $(basename ${0}) -m mtls -i -n client1.example.com \\
+          -k mtls.example.com/YYYY-MM-DD/private-ca.key -r /path/to/private-ca.crt \\
+          -P "\${MTLS_CA_KEY_PASS_PHRASE}" \\
+          -p "\${MTLS_CLIENT_KEY_PASS_PHRASE}" \\
+          -D 36500
+
+    # Check
 
     Check CSR file:
         $(basename ${0}) -c example.org.csr
@@ -69,13 +102,13 @@ Server configuration examples:
         SSLCertificateChainFile /path/to/example.org.ca.crt
 
     nginx:
-        ssl_certificate /path/to/example.org.crt;
+        ssl_certificate /path/to/example.org.fullchain.crt;
         ssl_certificate_key /path/to/example.org.key;
 _EOF_
 }
 
 atexit() {
-    if [[ ! -z "${RANDFILE}" ]]; then
+    if [[ ! -z "${RANDFILE:-}" ]]; then
         rm -f "${RANDFILE}"
     fi
 }
@@ -90,6 +123,173 @@ crt_check() {
     openssl x509 -noout -text -in "${CHECK_FILE}"
 }
 
+# This function prepares a random file used for private key generation.
+prepare_rand_file() {
+    local OUTPUT_DIR="${1}"
+    RANDFILE=$(mktemp -p "${OUTPUT_DIR}")
+    trap atexit EXIT
+    trap 'rc=$?; trap - EXIT; atexit; exit $?' INT PIPE TERM
+    echo "# Generate rand file: ${RANDFILE}"
+    head -c 4096 /dev/urandom | base64 | tr -d '=' > "${RANDFILE}"
+}
+
+# This function generates an encrypted private key and a decrypted private key pair.
+generate_private_key_pair() {
+    local KEY_BIT_LENGTH="${1}"
+    local KEY_PASS_PHRASE="${2}"
+    local KEY_WITH_PASS_FILE="${3}"
+    local KEY_FILE="${4}"
+
+    echo "# Generate new private key: ${KEY_WITH_PASS_FILE}"
+    openssl genrsa -des3 -passout "pass:${KEY_PASS_PHRASE}" -rand "${RANDFILE}" "${KEY_BIT_LENGTH}" > "${KEY_WITH_PASS_FILE}"
+    chmod 600 "${KEY_WITH_PASS_FILE}"
+
+    echo "# Unlock private key file: ${KEY_FILE}"
+    openssl rsa -passin "pass:${KEY_PASS_PHRASE}" -in "${KEY_WITH_PASS_FILE}" -out "${KEY_FILE}"
+    chmod 600 "${KEY_FILE}"
+}
+
+# This function builds a subjectAltName line from SAN option values.
+build_subject_alt_name_line() {
+    local SUBJECT_ALT_NAMES="${1}"
+    local SUBJECT_ALT_NAME=""
+
+    if [[ -z "${SUBJECT_ALT_NAMES}" ]]; then
+        echo ""
+        return
+    fi
+
+    local ALT_NAMES=${SUBJECT_ALT_NAMES//,/ }
+    local ALT_NAME=""
+    set -f
+    for ALT_NAME in ${ALT_NAMES}
+    do
+        if [[ -z "${SUBJECT_ALT_NAME}" ]]; then
+            SUBJECT_ALT_NAME="DNS:${ALT_NAME}"
+        else
+            SUBJECT_ALT_NAME="${SUBJECT_ALT_NAME}, DNS:${ALT_NAME}"
+        fi
+    done
+    set +f
+
+    echo "subjectAltName = ${SUBJECT_ALT_NAME}"
+}
+
+# This function creates an extension file for a private CA certificate.
+create_ca_extensions_file() {
+    local CA_EXT_FILE="${1}"
+    cat > "${CA_EXT_FILE}" << _EOF_
+basicConstraints = critical, CA:TRUE, pathlen:0
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+_EOF_
+}
+
+# This function creates an extension file for an mTLS client certificate.
+create_client_extensions_file() {
+    local CLIENT_EXT_FILE="${1}"
+    local SUBJECT_ALT_NAME_LINE="${2}"
+
+    cat > "${CLIENT_EXT_FILE}" << _EOF_
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+_EOF_
+
+    if [[ ! -z "${SUBJECT_ALT_NAME_LINE}" ]]; then
+        echo "${SUBJECT_ALT_NAME_LINE}" >> "${CLIENT_EXT_FILE}"
+    fi
+}
+
+# This function detects a CA key and certificate file pair under a directory.
+detect_ca_files_from_dir() {
+    local CA_DIR="${1}"
+    local -n OUT_CA_KEY_FILE="${2}"
+    local -n OUT_CA_CRT_FILE="${3}"
+
+    if [[ ! -d "${CA_DIR}" ]]; then
+        echo "Error: CA directory ${CA_DIR} does not exist."
+        exit 1
+    fi
+
+    local -a KEY_FILES=()
+    local -a CRT_FILES=()
+    local FOUND_FILE=""
+
+    while IFS= read -r -d '' FOUND_FILE
+    do
+        KEY_FILES+=("${FOUND_FILE}")
+    done < <(find "${CA_DIR}" -type f -name "*.key" -print0)
+
+    while IFS= read -r -d '' FOUND_FILE
+    do
+        CRT_FILES+=("${FOUND_FILE}")
+    done < <(find "${CA_DIR}" -type f -name "*.crt" -print0)
+
+    if [[ "${#KEY_FILES[@]}" -eq 0 ]]; then
+        echo "Error: no CA key file (*.key) was found under ${CA_DIR}."
+        exit 1
+    fi
+
+    if [[ "${#CRT_FILES[@]}" -eq 0 ]]; then
+        echo "Error: no CA certificate file (*.crt) was found under ${CA_DIR}."
+        exit 1
+    fi
+
+    local -a MATCHED_CA_KEYS=()
+    local -a MATCHED_CA_CRTS=()
+    local -a PREFERRED_CA_KEYS=()
+    local -a PREFERRED_CA_CRTS=()
+    local KEY_FILE=""
+    for KEY_FILE in "${KEY_FILES[@]}"
+    do
+        local CANDIDATE_CRT_FILE="${KEY_FILE%.key}.crt"
+        if [[ -f "${CANDIDATE_CRT_FILE}" ]]; then
+            MATCHED_CA_KEYS+=("${KEY_FILE}")
+            MATCHED_CA_CRTS+=("${CANDIDATE_CRT_FILE}")
+            # This preference avoids selecting client key/crt pairs when an mTLS CA pair exists.
+            if [[ "${KEY_FILE}" == *"-mtls-ca.key" ]]; then
+                PREFERRED_CA_KEYS+=("${KEY_FILE}")
+                PREFERRED_CA_CRTS+=("${CANDIDATE_CRT_FILE}")
+            fi
+        fi
+    done
+
+    if [[ "${#PREFERRED_CA_KEYS[@]}" -eq 1 ]]; then
+        OUT_CA_KEY_FILE="${PREFERRED_CA_KEYS[0]}"
+        OUT_CA_CRT_FILE="${PREFERRED_CA_CRTS[0]}"
+        return
+    fi
+
+    if [[ "${#PREFERRED_CA_KEYS[@]}" -gt 1 ]]; then
+        echo "Error: multiple preferred mTLS CA pairs were found under ${CA_DIR}. Please specify -k and -r explicitly."
+        exit 1
+    fi
+
+    if [[ "${#MATCHED_CA_KEYS[@]}" -eq 1 ]]; then
+        OUT_CA_KEY_FILE="${MATCHED_CA_KEYS[0]}"
+        OUT_CA_CRT_FILE="${MATCHED_CA_CRTS[0]}"
+        return
+    fi
+
+    if [[ "${#MATCHED_CA_KEYS[@]}" -gt 1 ]]; then
+        echo "Error: multiple CA key and certificate pairs were found under ${CA_DIR}. Please specify -k and -r explicitly."
+        exit 1
+    fi
+
+    if [[ "${#KEY_FILES[@]}" -eq 1 ]] && [[ "${#CRT_FILES[@]}" -eq 1 ]]; then
+        OUT_CA_KEY_FILE="${KEY_FILES[0]}"
+        OUT_CA_CRT_FILE="${CRT_FILES[0]}"
+        return
+    fi
+
+    echo "Error: unable to uniquely detect CA files under ${CA_DIR}. Please specify -k and -r explicitly."
+    exit 1
+}
+
 ssl_create() {
     local -n OPTIONS="${1}"
 
@@ -100,11 +300,7 @@ ssl_create() {
     # Create output directory
     mkdir -p "${OPTIONS["OUTPUT_DIR"]}"
 
-    RANDFILE=$(mktemp -p "${OPTIONS["OUTPUT_DIR"]}")
-    trap atexit EXIT
-    trap 'rc=$?; trap - EXIT; atexit; exit $?' INT PIPE TERM
-    echo "# Generate rand file: ${RANDFILE}"
-    head -c 4096 /dev/urandom | base64 | tr -d '=' > "${RANDFILE}"
+    prepare_rand_file "${OPTIONS["OUTPUT_DIR"]}"
 
     local FQDN_FQDN_PRIVATE_KEY_WITH_PASS="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}-pass.key"
     local FQDN_PRIVATE_KEY="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.key"
@@ -122,14 +318,12 @@ ssl_create() {
         FQDN_PRIVATE_KEY_PASS="${OPTIONS["KEY_PASS_PHRASE"]}"
     fi
 
-    echo "# Generate new private key: ${FQDN_FQDN_PRIVATE_KEY_WITH_PASS}"
-    openssl genrsa -des3 -passout "pass:${FQDN_PRIVATE_KEY_PASS}" -rand "${RANDFILE}" "${OPTIONS["KEY_BIT_LENGTH"]}" > "${FQDN_FQDN_PRIVATE_KEY_WITH_PASS}"
-    chmod 600 "${FQDN_FQDN_PRIVATE_KEY_WITH_PASS}"
+    generate_private_key_pair \
+        "${OPTIONS["KEY_BIT_LENGTH"]}" \
+        "${FQDN_PRIVATE_KEY_PASS}" \
+        "${FQDN_FQDN_PRIVATE_KEY_WITH_PASS}" \
+        "${FQDN_PRIVATE_KEY}"
     rm -f "${RANDFILE}"
-
-    echo "# Unlock private key file: ${FQDN_PRIVATE_KEY}"
-    openssl rsa -passin "pass:${FQDN_PRIVATE_KEY_PASS}" -in "${FQDN_FQDN_PRIVATE_KEY_WITH_PASS}" -out "${FQDN_PRIVATE_KEY}"
-    chmod 600 "${FQDN_PRIVATE_KEY}"
 
     local FQDN_CSR_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.csr"
 
@@ -172,6 +366,13 @@ ssl_create() {
         echo "# Generate self-signed CRT file: ${FQDN_CRT_FILE} (expiration days: ${OPTIONS["EXPIRE_DAYS"]})"
         openssl x509 -days "${OPTIONS["EXPIRE_DAYS"]}" -req -extfile "${SUBJECT_ALT_NAME_FILE}" -CA "${CA_FQDN_CRT_FILE}" -CAkey "${FQDN_PRIVATE_KEY}" -in "${FQDN_CSR_FILE}" -out "${FQDN_CRT_FILE}" -set_serial 1
 
+        # If -s is provided, create a fullchain file for direct server configuration use.
+        if [[ ! -z "${OPTIONS["SUBJECT"]}" ]]; then
+            local FQDN_FULLCHAIN_CRT_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.fullchain.crt"
+            echo "# Generate fullchain CRT file: ${FQDN_FULLCHAIN_CRT_FILE}"
+            cat "${FQDN_CRT_FILE}" "${CA_FQDN_CRT_FILE}" > "${FQDN_FULLCHAIN_CRT_FILE}"
+        fi
+
         echo "# Check CSR file: ${FQDN_CSR_FILE}"
         csr_check "${FQDN_CSR_FILE}"
 
@@ -181,6 +382,172 @@ ssl_create() {
         echo "# Check CSR file: ${FQDN_CSR_FILE}"
         csr_check "${FQDN_CSR_FILE}"
     fi
+
+    echo
+    echo "# Result: ${OPTIONS["OUTPUT_DIR"]}/"
+    ls -al "${OPTIONS["OUTPUT_DIR"]}"
+}
+
+# This function creates a private CA and optionally issues mTLS client certificates.
+mtls_create() {
+    local -n OPTIONS="${1}"
+
+    local ISSUE_CLIENT="${OPTIONS["MTLS_ISSUE_CLIENT"]}"
+    local CA_PRIVATE_KEY="${OPTIONS["MTLS_CA_KEY_FILE"]}"
+    local CA_CRT_FILE="${OPTIONS["MTLS_CA_CRT_FILE"]}"
+    local CA_DIR="${OPTIONS["MTLS_CA_DIR"]}"
+
+    if [[ "${ISSUE_CLIENT}" -eq 0 ]] && [[ ! -z "${CA_DIR}" || ! -z "${CA_PRIVATE_KEY}" || ! -z "${CA_CRT_FILE}" ]]; then
+        echo "Error: -R, -k, and -r are for client issuance. Use -i with -m mtls."
+        exit 1
+    fi
+
+    # If CA directory is provided and -k or -r is missing, detect CA files automatically.
+    if [[ ! -z "${CA_DIR}" ]] && [[ -z "${CA_PRIVATE_KEY}" || -z "${CA_CRT_FILE}" ]]; then
+        local AUTO_DETECTED_CA_KEY_FILE=""
+        local AUTO_DETECTED_CA_CRT_FILE=""
+        detect_ca_files_from_dir "${CA_DIR}" AUTO_DETECTED_CA_KEY_FILE AUTO_DETECTED_CA_CRT_FILE
+        if [[ -z "${CA_PRIVATE_KEY}" ]]; then
+            CA_PRIVATE_KEY="${AUTO_DETECTED_CA_KEY_FILE}"
+        fi
+        if [[ -z "${CA_CRT_FILE}" ]]; then
+            CA_CRT_FILE="${AUTO_DETECTED_CA_CRT_FILE}"
+        fi
+    fi
+
+    mkdir -p "${OPTIONS["OUTPUT_DIR"]}"
+    prepare_rand_file "${OPTIONS["OUTPUT_DIR"]}"
+
+    local NEW_PRIVATE_KEY_PASS=""
+    if [[ -z "${OPTIONS["KEY_PASS_PHRASE"]}" ]]; then
+        # This fallback allows non-interactive mTLS runs when only -P is provided.
+        if [[ ! -z "${OPTIONS["MTLS_CA_KEY_PASS_PHRASE"]}" ]]; then
+            NEW_PRIVATE_KEY_PASS="${OPTIONS["MTLS_CA_KEY_PASS_PHRASE"]}"
+        else
+            read -s -p "Enter pass phrase for new private key: " NEW_PRIVATE_KEY_PASS
+            echo
+        fi
+    else
+        NEW_PRIVATE_KEY_PASS="${OPTIONS["KEY_PASS_PHRASE"]}"
+    fi
+
+    # If CA files are not provided, create a private CA in this run.
+    if [[ -z "${CA_PRIVATE_KEY}" ]] && [[ -z "${CA_CRT_FILE}" ]] && [[ -z "${CA_DIR}" ]]; then
+        local CA_NAME="${OPTIONS["FQDN"]}-mtls-ca"
+        local CA_PRIVATE_KEY_WITH_PASS="${OPTIONS["OUTPUT_DIR"]}/${CA_NAME}-pass.key"
+        CA_PRIVATE_KEY="${OPTIONS["OUTPUT_DIR"]}/${CA_NAME}.key"
+        CA_CRT_FILE="${OPTIONS["OUTPUT_DIR"]}/${CA_NAME}.crt"
+        local CA_SUBJECT="${OPTIONS["SUBJECT"]}"
+        local CA_EXT_FILE="${OPTIONS["OUTPUT_DIR"]}/${CA_NAME}.ext"
+
+        if [[ -z "${CA_SUBJECT}" ]]; then
+            CA_SUBJECT="/CN=${CA_NAME}"
+        fi
+
+        create_ca_extensions_file "${CA_EXT_FILE}"
+        generate_private_key_pair \
+            "${OPTIONS["KEY_BIT_LENGTH"]}" \
+            "${NEW_PRIVATE_KEY_PASS}" \
+            "${CA_PRIVATE_KEY_WITH_PASS}" \
+            "${CA_PRIVATE_KEY}"
+
+        local CA_CSR_FILE="${OPTIONS["OUTPUT_DIR"]}/${CA_NAME}.csr"
+        echo "# Generate mTLS private CA CSR file: ${CA_CSR_FILE}"
+        openssl req -new -sha256 -key "${CA_PRIVATE_KEY}" -out "${CA_CSR_FILE}" -subj "${CA_SUBJECT}"
+
+        echo "# Generate mTLS private CA CRT file: ${CA_CRT_FILE}"
+        openssl x509 -req -sha256 \
+            -days "${OPTIONS["EXPIRE_DAYS"]}" \
+            -in "${CA_CSR_FILE}" \
+            -signkey "${CA_PRIVATE_KEY}" \
+            -out "${CA_CRT_FILE}" \
+            -extfile "${CA_EXT_FILE}"
+    elif [[ -z "${CA_PRIVATE_KEY}" ]] || [[ -z "${CA_CRT_FILE}" ]]; then
+        echo "Error: specify both -k and -r together, or provide -R CA_DIR for auto-detection."
+        exit 1
+    fi
+
+    if [[ ! -f "${CA_PRIVATE_KEY}" ]]; then
+        echo "Error: CA private key file ${CA_PRIVATE_KEY} does not exist."
+        exit 1
+    fi
+
+    if [[ ! -f "${CA_CRT_FILE}" ]]; then
+        echo "Error: CA certificate file ${CA_CRT_FILE} does not exist."
+        exit 1
+    fi
+
+    if [[ "${ISSUE_CLIENT}" -eq 0 ]]; then
+        rm -f "${RANDFILE}"
+        echo
+        echo "# Result: ${OPTIONS["OUTPUT_DIR"]}/"
+        ls -al "${OPTIONS["OUTPUT_DIR"]}"
+        return
+    fi
+
+    local CLIENT_PRIVATE_KEY_WITH_PASS="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}-pass.key"
+    local CLIENT_PRIVATE_KEY="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.key"
+    local CLIENT_CSR_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.csr"
+    local CLIENT_CRT_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.crt"
+    local CLIENT_P12_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.p12"
+
+    if [[ "${OPTIONS["FORCE"]}" -eq 0 ]] && [[ -f "${CLIENT_PRIVATE_KEY}" ]]; then
+        echo "Error: private key ${CLIENT_PRIVATE_KEY} already exists. Use the -f option if you want to overwrite."
+        exit 1
+    fi
+
+    generate_private_key_pair \
+        "${OPTIONS["KEY_BIT_LENGTH"]}" \
+        "${NEW_PRIVATE_KEY_PASS}" \
+        "${CLIENT_PRIVATE_KEY_WITH_PASS}" \
+        "${CLIENT_PRIVATE_KEY}"
+    rm -f "${RANDFILE}"
+
+    echo "# Generate client CSR file: ${CLIENT_CSR_FILE}"
+    # This default keeps mTLS client issuance non-interactive when -s is omitted.
+    local CLIENT_SUBJECT="${OPTIONS["SUBJECT"]}"
+    if [[ -z "${CLIENT_SUBJECT}" ]]; then
+        CLIENT_SUBJECT="/CN=${OPTIONS["FQDN"]}"
+    fi
+    openssl req -new -sha256 -key "${CLIENT_PRIVATE_KEY}" -out "${CLIENT_CSR_FILE}" -subj "${CLIENT_SUBJECT}"
+
+    local CLIENT_EXT_FILE="${OPTIONS["OUTPUT_DIR"]}/${OPTIONS["FQDN"]}.client.ext"
+    local SUBJECT_ALT_NAME_LINE=""
+    SUBJECT_ALT_NAME_LINE=$(build_subject_alt_name_line "${OPTIONS["SUBJECT_ALT_NAMES"]}")
+    create_client_extensions_file "${CLIENT_EXT_FILE}" "${SUBJECT_ALT_NAME_LINE}"
+
+    local -a CA_PASSIN_OPTION=()
+    if [[ ! -z "${OPTIONS["MTLS_CA_KEY_PASS_PHRASE"]}" ]]; then
+        CA_PASSIN_OPTION=(-passin "pass:${OPTIONS["MTLS_CA_KEY_PASS_PHRASE"]}")
+    fi
+
+    echo "# Generate mTLS client CRT file: ${CLIENT_CRT_FILE} (expiration days: ${OPTIONS["EXPIRE_DAYS"]})"
+    openssl x509 -req -sha256 \
+        -days "${OPTIONS["EXPIRE_DAYS"]}" \
+        -in "${CLIENT_CSR_FILE}" \
+        -CA "${CA_CRT_FILE}" \
+        -CAkey "${CA_PRIVATE_KEY}" \
+        -CAcreateserial \
+        -out "${CLIENT_CRT_FILE}" \
+        -extfile "${CLIENT_EXT_FILE}" \
+        "${CA_PASSIN_OPTION[@]}"
+
+    # This export creates a PKCS#12 bundle for client applications.
+    echo "# Generate mTLS client PKCS#12 file: ${CLIENT_P12_FILE}"
+    openssl pkcs12 -export \
+        -out "${CLIENT_P12_FILE}" \
+        -inkey "${CLIENT_PRIVATE_KEY}" \
+        -in "${CLIENT_CRT_FILE}" \
+        -certfile "${CA_CRT_FILE}" \
+        -name "${OPTIONS["FQDN"]}" \
+        -passout "pass:${NEW_PRIVATE_KEY_PASS}"
+    chmod 600 "${CLIENT_P12_FILE}"
+
+    echo "# Check CSR file: ${CLIENT_CSR_FILE}"
+    csr_check "${CLIENT_CSR_FILE}"
+
+    echo "# Check CRT file: ${CLIENT_CRT_FILE}"
+    crt_check "${CLIENT_CRT_FILE}"
 
     echo
     echo "# Result: ${OPTIONS["OUTPUT_DIR"]}/"
@@ -200,9 +567,14 @@ main() {
         ["OUTPUT_DIR"]=""
         ["SUBJECT"]=""
         ["SUBJECT_ALT_NAMES"]=""
+        ["MTLS_ISSUE_CLIENT"]=0
+        ["MTLS_CA_DIR"]=""
+        ["MTLS_CA_KEY_FILE"]=""
+        ["MTLS_CA_CRT_FILE"]=""
+        ["MTLS_CA_KEY_PASS_PHRASE"]=""
     )
 
-    while getopts c:C:Sfn:o:p:s:l:D:A:h OPT; do
+    while getopts c:C:Sfim:n:o:p:s:l:D:A:R:k:r:P:h OPT; do
         case "${OPT}" in
             "c" )
                 CMD_OPTIONS["MODE"]="csr_check"
@@ -216,6 +588,15 @@ main() {
                 CMD_OPTIONS["MODE"]="self_signed" ;;
             "f" )
                 CMD_OPTIONS["FORCE"]=1 ;;
+            "i" )
+                CMD_OPTIONS["MTLS_ISSUE_CLIENT"]=1 ;;
+            "m" )
+                if [[ "${OPTARG}" != "mtls" ]]; then
+                    echo "Error: -m supports only 'mtls'."
+                    exit 1
+                fi
+                CMD_OPTIONS["MODE"]="mtls"
+                ;;
             "n" )
                 CMD_OPTIONS["FQDN"]="${OPTARG}" ;;
             "o" )
@@ -230,6 +611,14 @@ main() {
                 CMD_OPTIONS["EXPIRE_DAYS"]="${OPTARG}" ;;
             "A" )
                 CMD_OPTIONS["SUBJECT_ALT_NAMES"]="${OPTARG}" ;;
+            "R" )
+                CMD_OPTIONS["MTLS_CA_DIR"]="${OPTARG}" ;;
+            "k" )
+                CMD_OPTIONS["MTLS_CA_KEY_FILE"]="${OPTARG}" ;;
+            "r" )
+                CMD_OPTIONS["MTLS_CA_CRT_FILE"]="${OPTARG}" ;;
+            "P" )
+                CMD_OPTIONS["MTLS_CA_KEY_PASS_PHRASE"]="${OPTARG}" ;;
             "h" )
                 usage
                 exit 0
@@ -255,9 +644,14 @@ main() {
     fi
 
     # Create mode
-    if [[ -z "${CMD_OPTIONS["FQDN"]}" ]]; then
+    if [[ -z "${CMD_OPTIONS["FQDN"]:-}" ]]; then
         echo "Error: FQDN is not set"
         exit 1
+    fi
+
+    # This default keeps mTLS client outputs under CA_DIR/client only when -o is not explicitly set.
+    if [[ "${CMD_OPTIONS["MODE"]}" == "mtls" ]] && [[ "${CMD_OPTIONS["MTLS_ISSUE_CLIENT"]}" -eq 1 ]] && [[ ! -z "${CMD_OPTIONS["MTLS_CA_DIR"]}" ]] && [[ -z "${CMD_OPTIONS["OUTPUT_DIR"]}" ]]; then
+        CMD_OPTIONS["OUTPUT_DIR"]="${CMD_OPTIONS["MTLS_CA_DIR"]%/}/client"
     fi
 
     # Output directory
@@ -265,8 +659,11 @@ main() {
         CMD_OPTIONS["OUTPUT_DIR"]="${CMD_OPTIONS["FQDN"]}/$(date -I)"
     fi
 
-    ssl_create CMD_OPTIONS
+    if [[ "${CMD_OPTIONS["MODE"]}" == "mtls" ]]; then
+        mtls_create CMD_OPTIONS
+    else
+        ssl_create CMD_OPTIONS
+    fi
 }
 
 [[ ${#BASH_SOURCE[@]} = 1 ]] && main "${@:+$@}"
-
