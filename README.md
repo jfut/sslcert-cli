@@ -15,8 +15,8 @@ Create SSL certificate files such as a private key, CSR, and CRT, and also suppo
 Usage:
     sslcert-cli [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-S] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n FQDN
 
-    sslcert-cli -m mtls [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-D EXPIRE_DAYS] -n CA_NAME
-    sslcert-cli -m mtls -i [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p KEY_PASS_PHRASE] [-s SUBJECT] [-R CA_DIR] [-k CA_KEY_FILE] [-r CA_CRT_FILE] [-P MTLS_CA_KEY_PASS_PHRASE] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n CLIENT_NAME
+    sslcert-cli -m mtls [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-P MTLS_CA_KEY_PASS_PHRASE] [-s SUBJECT] [-D EXPIRE_DAYS] -n CA_NAME
+    sslcert-cli -m mtls -i [-f] [-o OUTPUT_DIR] [-l KEY_BIT_LENGTH] [-p MTLS_CLIENT_KEY_PASS_PHRASE] [-s SUBJECT] [-R CA_DIR] [-k CA_KEY_FILE] [-r CA_CRT_FILE] [-P MTLS_CA_KEY_PASS_PHRASE] [-A SUBJECT_ALT_NAMES] [-D EXPIRE_DAYS] -n CLIENT_NAME
 
     sslcert-cli -c FQDN_CSR_FILE
     sslcert-cli -C FQDN_CRT_FILE
@@ -31,7 +31,7 @@ Examples:
         sslcert-cli -n example.org
 
     Create private key with pass phrase and CSR files:
-        KEY_PASS_PHRASE=$(read -s -p "KEY_PASS_PHRASE: " KEY_PASS_PHRASE; echo ${KEY_PASS_PHRASE})
+        KEY_PASS_PHRASE=$(read -r -s -p "KEY_PASS_PHRASE: " KEY_PASS_PHRASE; echo ${KEY_PASS_PHRASE})
         sslcert-cli -p "${KEY_PASS_PHRASE}" -n example.org
 
     Create private key and CSR files with a specified request subject:
@@ -53,24 +53,25 @@ Examples:
     # mTLS
 
     Create mTLS private CA only:
-        MTLS_CA_KEY_PASS_PHRASE=$(read -s -p "MTLS_CA_KEY_PASS_PHRASE: " MTLS_CA_KEY_PASS_PHRASE; echo ${MTLS_CA_KEY_PASS_PHRASE})
+        MTLS_CA_KEY_PASS_PHRASE=$(read -r -s -p "MTLS_CA_KEY_PASS_PHRASE: " MTLS_CA_KEY_PASS_PHRASE; echo ${MTLS_CA_KEY_PASS_PHRASE})
         sslcert-cli -m mtls -P "${MTLS_CA_KEY_PASS_PHRASE}" -n mtls.example.com \
           -s "/C=JP/ST=Tokyo/L=Shinjuku-ku/O=Example Corporation/OU=Example Group/CN=mtls.example.com" -D 36500
 
-    Create mTLS client certificate by auto-detecting CA files from directory:
-        MTLS_CA_KEY_PASS_PHRASE=$(read -s -p "MTLS_CA_KEY_PASS_PHRASE: " MTLS_CA_KEY_PASS_PHRASE; echo ${MTLS_CA_KEY_PASS_PHRASE})
-        MTLS_CLIENT_KEY_PASS_PHRASE=$(read -s -p "MTLS_CLIENT_KEY_PASS_PHRASE: " MTLS_CLIENT_KEY_PASS_PHRASE; echo ${MTLS_CLIENT_KEY_PASS_PHRASE})
+    Create mTLS client certificate by auto-detecting CA files directly under a directory:
+        MTLS_CA_KEY_PASS_PHRASE=$(read -r -s -p "MTLS_CA_KEY_PASS_PHRASE: " MTLS_CA_KEY_PASS_PHRASE; echo ${MTLS_CA_KEY_PASS_PHRASE})
+        MTLS_CLIENT_KEY_PASS_PHRASE=$(read -r -s -p "MTLS_CLIENT_KEY_PASS_PHRASE: " MTLS_CLIENT_KEY_PASS_PHRASE; echo ${MTLS_CLIENT_KEY_PASS_PHRASE})
         sslcert-cli -m mtls -i -n client1.mtls.example.com \
           -R mtls.example.com/YYYY-MM-DD/ \
           -P "${MTLS_CA_KEY_PASS_PHRASE}" \
           -p "${MTLS_CLIENT_KEY_PASS_PHRASE}" \
           -D 36500
-        # If both client and CA pairs exist, *-mtls-ca.key/crt is preferred automatically.
+        # Only CA key/crt pairs directly under -R are auto-detected.
+        # If multiple CA pairs exist, *-mtls-ca.key/crt is preferred automatically.
         # If -o is specified together with -R, the -o path is used as the output directory.
 
     Create mTLS client certificate with existing private CA:
-        MTLS_CA_KEY_PASS_PHRASE=$(read -s -p "MTLS_CA_KEY_PASS_PHRASE: " MTLS_CA_KEY_PASS_PHRASE; echo ${MTLS_CA_KEY_PASS_PHRASE})
-        MTLS_CLIENT_KEY_PASS_PHRASE=$(read -s -p "MTLS_CLIENT_KEY_PASS_PHRASE: " MTLS_CLIENT_KEY_PASS_PHRASE; echo ${MTLS_CLIENT_KEY_PASS_PHRASE})
+        MTLS_CA_KEY_PASS_PHRASE=$(read -r -s -p "MTLS_CA_KEY_PASS_PHRASE: " MTLS_CA_KEY_PASS_PHRASE; echo ${MTLS_CA_KEY_PASS_PHRASE})
+        MTLS_CLIENT_KEY_PASS_PHRASE=$(read -r -s -p "MTLS_CLIENT_KEY_PASS_PHRASE: " MTLS_CLIENT_KEY_PASS_PHRASE; echo ${MTLS_CLIENT_KEY_PASS_PHRASE})
         sslcert-cli -m mtls -i -n client1.example.com \
           -k mtls.example.com/YYYY-MM-DD/private-ca.key -r /path/to/private-ca.crt \
           -P "${MTLS_CA_KEY_PASS_PHRASE}" \
