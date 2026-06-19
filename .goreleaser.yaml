@@ -1,0 +1,78 @@
+version: 2
+
+project_name: sslcert-cli
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+metadata:
+  mod_timestamp: "{{ .CommitTimestamp }}"
+
+report_sizes: true
+
+gomod:
+  gobinary: /bin/true
+
+builds:
+  - id: sslcert-cli
+    skip: true
+
+archives:
+  - id: binaries
+    meta: true
+    formats: ["tar.gz"]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_noarch"
+    builds_info:
+      group: root
+      owner: root
+      mode: 0755
+    files:
+      - src: sslcert-cli
+        dst: sslcert-cli
+        info:
+          mode: 0755
+          owner: root
+          group: root
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+checksum:
+  name_template: "checksums.txt"
+
+nfpms:
+  - id: sslcert-cli
+    meta: true
+    package_name: sslcert-cli
+    file_name_template: "{{ .ConventionalFileName }}"
+    description: |-
+      sslcert-cli is a fast updater for ipset IP sets
+    maintainer: Jun Futagawa <jfut@integ.jp>
+    license: MIT
+    vendor: sslcert-cli project
+    bindir: /usr/bin
+    section: utils
+    formats:
+      - apk
+      - deb
+      - rpm
+      - termux.deb
+      - archlinux
+    contents:
+      - src: sslcert-cli
+        dst: /usr/bin/sslcert-cli
+        file_info:
+          mode: 0755
+          owner: root
+          group: root
+      - src: LICENSE
+        dst: /usr/share/licenses/sslcert-cli/LICENSE
+        file_info:
+          mode: 0644
+    deb:
+      lintian_overrides:
+        - changelog-file-missing-in-native-package
