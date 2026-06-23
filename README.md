@@ -8,7 +8,7 @@
 ## Usage
 
 ```bash
-sslcert-cli 1.3.0
+sslcert-cli 1.3.1
 
 Create SSL certificate files such as a private key, CSR, and CRT, and also support generating mTLS private CA and client certificates.
 
