@@ -1,11 +1,8 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Copyright 2023-2026 Jun Futagawa (jfut)
 #
-# Create SSL certificate files such as a private key, CSR, and CRT, and also support generating mTLS private CA and client certificates.
-#
-# Copyright (c) 2023-2026 Jun Futagawa (jfut)
-#
-# This software is released under the MIT License.
-# http://opensource.org/licenses/mit-license.php
+# sslcert-cli is a command-line tool for creating SSL certificate files.
 
 set -euo pipefail
 
