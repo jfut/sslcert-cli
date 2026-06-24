@@ -5,6 +5,26 @@
 
 `sslcert-cli` is a command line tool that creates SSL certificate files such as a private key, CSR, and CRT, and also supports generating mTLS private CA and client certificates.
 
+## Installation
+
+Download a release package from [Releases](https://github.com/jfut/sslcert-cli/releases), or use the RPM repository setup below on RHEL-compatible distributions.
+
+### Install RPM package with dnf-plugin-anyrepo
+
+Install [dnf-plugin-anyrepo](https://github.com/jfut/dnf-plugin-anyrepo), import the RPM GPG key, add this repository, then install the package with `dnf`.
+
+```bash
+rpm --import https://raw.githubusercontent.com/jfut/sslcert-cli/refs/heads/main/packaging/RPM-GPG-KEY-jfut-github
+dnf-anyrepo add https://github.com/jfut/sslcert-cli
+dnf install sslcert-cli
+```
+
+Upgrade the installed package with `dnf`.
+
+```bash
+dnf upgrade sslcert-cli
+```
+
 ## Usage
 
 ```bash
